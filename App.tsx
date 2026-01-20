@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GamePhase, GameState, Round } from './types';
 import { generateLocations, generateStreetViewImage } from './services/gemini';
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
     currentRoundIndex: 0,
@@ -25,16 +27,33 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, [gameState.phase, gameState.timeLeft]);
 
-  // Фоновая загрузка остальных изображений
+  // Функция для получения изображения с повторными попытками при 429 ошибке
+  const fetchWithRetry = async (location: any, retries = 3, delay = 5000): Promise<string> => {
+    try {
+      return await generateStreetViewImage(location);
+    } catch (e: any) {
+      const isRateLimit = e?.message?.includes('429') || JSON.stringify(e).includes('429');
+      if (isRateLimit && retries > 0) {
+        console.warn(`Rate limit hit, retrying in ${delay}ms...`);
+        await sleep(delay);
+        return fetchWithRetry(location, retries - 1, delay * 2);
+      }
+      throw e;
+    }
+  };
+
+  // Фоновая загрузка остальных изображений с паузами для соблюдения лимитов
   const prefetchImages = async (rounds: Round[]) => {
     if (prefetchActive.current) return;
     prefetchActive.current = true;
 
     for (let i = 1; i < rounds.length; i++) {
-      // Загружаем только если еще нет картинки
       if (!rounds[i].imageUrl) {
         try {
-          const img = await generateStreetViewImage(rounds[i].location);
+          // Добавляем паузу между запросами (4 секунды), чтобы не спамить API
+          await sleep(4000); 
+          const img = await fetchWithRetry(rounds[i].location);
+          
           setGameState(prev => {
             const newRounds = [...prev.rounds];
             if (newRounds[i]) {
@@ -44,6 +63,8 @@ const App: React.FC = () => {
           });
         } catch (e) {
           console.error(`Failed to prefetch image for round ${i}`, e);
+          // Ждем подольше перед следующей попыткой после ошибки
+          await sleep(10000);
         }
       }
     }
@@ -57,15 +78,14 @@ const App: React.FC = () => {
       const locs = await generateLocations();
       setLoadingMsg(`Готовим первый раунд...`);
       
-      // Сначала создаем пустые раунды
       const initialRounds: Round[] = locs.map((l) => ({
         location: l,
         selectedOptionIndex: null,
         imageUrl: ''
       }));
 
-      // Загружаем только ПЕРВОЕ изображение для быстрого старта
-      const firstImg = await generateStreetViewImage(locs[0]);
+      // Первую картинку загружаем сразу (с ретраями)
+      const firstImg = await fetchWithRetry(locs[0]);
       initialRounds[0].imageUrl = firstImg;
 
       setGameState({
@@ -76,10 +96,9 @@ const App: React.FC = () => {
         timeLeft: 30
       });
 
-      // Запускаем фоновую загрузку остальных
       prefetchImages(initialRounds);
     } catch (e) {
-      setLoadingMsg("Ошибка загрузки. Попробуйте еще раз.");
+      setLoadingMsg("Ошибка загрузки. Попробуйте еще раз позже.");
     }
   };
 
@@ -105,7 +124,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Если картинка уже готова (из предзагрузки), переходим мгновенно
     if (gameState.rounds[nextIdx].imageUrl) {
       setGameState(s => ({
         ...s,
@@ -114,12 +132,11 @@ const App: React.FC = () => {
         timeLeft: 30
       }));
     } else {
-      // Если еще не готова, показываем лоадер и ждем именно её
       setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
       setLoadingMsg(`Секунду, проявляем фото (${nextIdx + 1}/10)...`);
       
       try {
-        const img = await generateStreetViewImage(gameState.rounds[nextIdx].location);
+        const img = await fetchWithRetry(gameState.rounds[nextIdx].location);
         setGameState(prev => {
           const newRounds = [...prev.rounds];
           newRounds[nextIdx].imageUrl = img;
@@ -132,8 +149,8 @@ const App: React.FC = () => {
           };
         });
       } catch {
-        // В случае ошибки пробуем перепрыгнуть или повторить
-        nextRound(); 
+        // Если совсем не получается, пробуем еще раз
+        setTimeout(nextRound, 2000);
       }
     }
   };
@@ -142,7 +159,6 @@ const App: React.FC = () => {
 
   return (
     <div className="h-full w-full bg-slate-950 flex flex-col items-center justify-center p-4">
-      {/* HUD */}
       {(gameState.phase === GamePhase.QUIZ || gameState.phase === GamePhase.RESULT) && (
         <div className="fixed top-6 left-0 right-0 z-50 flex justify-center gap-4 px-4 pointer-events-none">
           <div className="bg-slate-900/90 backdrop-blur-xl px-8 py-3 rounded-full border border-slate-700 flex items-center gap-12 shadow-2xl pointer-events-auto">
@@ -183,20 +199,24 @@ const App: React.FC = () => {
         {gameState.phase === GamePhase.LOADING_ROUND && (
           <div className="flex flex-col items-center justify-center h-full gap-6">
             <div className="w-20 h-20 border-4 border-slate-800 border-t-indigo-500 rounded-full animate-spin"></div>
-            <p className="text-2xl font-bold text-slate-300 animate-pulse">{loadingMsg}</p>
+            <p className="text-2xl font-bold text-slate-300 animate-pulse text-center px-4">{loadingMsg}</p>
           </div>
         )}
 
         {(gameState.phase === GamePhase.QUIZ || gameState.phase === GamePhase.RESULT) && (
           <div className="flex flex-col h-full gap-6 animate-in fade-in duration-500">
-            {/* Image Area */}
             <div className="relative flex-1 rounded-3xl overflow-hidden border-4 border-slate-800 shadow-2xl bg-slate-900 min-h-[300px]">
-              <img 
-                src={currentRound?.imageUrl} 
-                className="w-full h-full object-cover transition-opacity duration-700" 
-                alt="Geography Quiz"
-                loading="eager"
-              />
+              {currentRound?.imageUrl ? (
+                <img 
+                  src={currentRound.imageUrl} 
+                  className="w-full h-full object-cover transition-opacity duration-700" 
+                  alt="Geography Quiz"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                  <div className="w-12 h-12 border-4 border-slate-700 border-t-indigo-500 rounded-full animate-spin"></div>
+                </div>
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
               
               {gameState.phase === GamePhase.RESULT && (
@@ -204,7 +224,18 @@ const App: React.FC = () => {
                   <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-3xl text-center max-w-sm w-full mx-4">
                      <p className="text-slate-500 uppercase text-xs font-bold tracking-widest mb-1">Правильный ответ:</p>
                      <h2 className="text-3xl font-black text-white mb-1">{currentRound.location.options[currentRound.location.correctOptionIndex]}</h2>
-                     <p className="text-indigo-400 font-bold mb-6 italic">{currentRound.location.name}</p>
+                     <p className="text-indigo-400 font-bold mb-2 italic">{currentRound.location.name}</p>
+                     
+                     <a 
+                       href={`https://www.google.com/maps/search/?api=1&query=${currentRound.location.lat},${currentRound.location.lng}`} 
+                       target="_blank" 
+                       rel="noopener noreferrer"
+                       className="inline-flex items-center gap-2 text-indigo-300 hover:text-indigo-100 text-sm font-semibold mb-6 underline decoration-indigo-500/50 underline-offset-4 transition-colors"
+                     >
+                       <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                       Посмотреть на карте
+                     </a>
+
                      <button 
                         onClick={nextRound}
                         className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold text-xl shadow-lg transition-transform active:scale-95"
@@ -216,7 +247,6 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Options Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-auto">
               {currentRound?.location.options.map((option, idx) => {
                 let btnClass = "bg-slate-900 hover:bg-slate-800 text-white border-slate-700";
