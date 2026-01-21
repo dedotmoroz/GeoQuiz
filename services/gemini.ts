@@ -5,14 +5,13 @@ import { Location } from "../types";
 export const generateLocations = async (): Promise<Location[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: `Сгенерируй список из 10 случайных и интересных географических локаций по всему миру для игры-викторины. 
-    Для каждого места предложи 4 варианта ответа (названия стран или известных городов), из которых только один правильный.
-    ПРАВИЛА:
-    1. Локации должны быть разнообразными (разные континенты).
-    2. Варианты ответов должны быть правдоподобными (например, если это город в Европе, другие варианты тоже должны быть европейскими).
-    3. Не используй слишком очевидные туристические места.
-    4. Укажи индекс правильного ответа (от 0 до 3).`,
+    model: 'gemini-3-flash-preview',
+    contents: `Generate 10 diverse geographic locations worldwide for a quiz. 
+    For each: 
+    - Provide 4 plausible options (countries/cities).
+    - Identify correct index (0-3).
+    - Give a brief atmosphere description for image generation.
+    - Return as JSON.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -25,8 +24,7 @@ export const generateLocations = async (): Promise<Location[]> => {
             name: { type: Type.STRING },
             options: { 
               type: Type.ARRAY, 
-              items: { type: Type.STRING },
-              description: "4 варианта ответа, где один правильный."
+              items: { type: Type.STRING }
             },
             correctOptionIndex: { type: Type.INTEGER },
             description: { type: Type.STRING },
@@ -43,13 +41,7 @@ export const generateLocations = async (): Promise<Location[]> => {
 
 export const generateStreetViewImage = async (location: Location): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const prompt = `A high-quality photographic panorama of a street or landscape in ${location.name}. 
-  Context: ${location.description}. 
-  STYLE: Realistic, cinematic, 8k resolution.
-  IMPORTANT: 
-  - ABSOLUTELY NO TEXT, NO SIGNS with names, NO LABELS.
-  - No watermarks or digital UI elements.
-  - Focus on local architecture, road type, nature and atmosphere.`;
+  const prompt = `A realistic photographic view of a street or landscape in ${location.name}. ${location.description}. Cinematic, 8k. NO TEXT, NO SIGNS, NO UI. Focus on architecture and nature.`;
   
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',

@@ -27,14 +27,12 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, [gameState.phase, gameState.timeLeft]);
 
-  // Функция для получения изображения с повторными попытками при 429 ошибке
-  const fetchWithRetry = async (location: any, retries = 3, delay = 5000): Promise<string> => {
+  const fetchWithRetry = async (location: any, retries = 3, delay = 3000): Promise<string> => {
     try {
       return await generateStreetViewImage(location);
     } catch (e: any) {
       const isRateLimit = e?.message?.includes('429') || JSON.stringify(e).includes('429');
       if (isRateLimit && retries > 0) {
-        console.warn(`Rate limit hit, retrying in ${delay}ms...`);
         await sleep(delay);
         return fetchWithRetry(location, retries - 1, delay * 2);
       }
@@ -42,7 +40,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Фоновая загрузка остальных изображений с паузами для соблюдения лимитов
   const prefetchImages = async (rounds: Round[]) => {
     if (prefetchActive.current) return;
     prefetchActive.current = true;
@@ -50,21 +47,17 @@ const App: React.FC = () => {
     for (let i = 1; i < rounds.length; i++) {
       if (!rounds[i].imageUrl) {
         try {
-          // Добавляем паузу между запросами (4 секунды), чтобы не спамить API
-          await sleep(4000); 
+          await sleep(2500); // Снизили задержку между предзагрузками
           const img = await fetchWithRetry(rounds[i].location);
           
           setGameState(prev => {
             const newRounds = [...prev.rounds];
-            if (newRounds[i]) {
-              newRounds[i].imageUrl = img;
-            }
+            if (newRounds[i]) newRounds[i].imageUrl = img;
             return { ...prev, rounds: newRounds };
           });
         } catch (e) {
           console.error(`Failed to prefetch image for round ${i}`, e);
-          // Ждем подольше перед следующей попыткой после ошибки
-          await sleep(10000);
+          await sleep(5000);
         }
       }
     }
@@ -73,10 +66,11 @@ const App: React.FC = () => {
 
   const startGame = async () => {
     setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
-    setLoadingMsg("Ищем интересные уголки планеты...");
+    setLoadingMsg("Ищем локации...");
     try {
+      // Модель Flash сгенерирует это очень быстро
       const locs = await generateLocations();
-      setLoadingMsg(`Готовим первый раунд...`);
+      setLoadingMsg(`Загружаем первый вид...`);
       
       const initialRounds: Round[] = locs.map((l) => ({
         location: l,
@@ -84,7 +78,6 @@ const App: React.FC = () => {
         imageUrl: ''
       }));
 
-      // Первую картинку загружаем сразу (с ретраями)
       const firstImg = await fetchWithRetry(locs[0]);
       initialRounds[0].imageUrl = firstImg;
 
@@ -98,14 +91,13 @@ const App: React.FC = () => {
 
       prefetchImages(initialRounds);
     } catch (e) {
-      setLoadingMsg("Ошибка загрузки. Попробуйте еще раз позже.");
+      setLoadingMsg("Ошибка. Попробуйте снова через минуту.");
     }
   };
 
   const handleOptionSelect = (index: number) => {
     const currentRound = gameState.rounds[gameState.currentRoundIndex];
     const isCorrect = index === currentRound.location.correctOptionIndex;
-    
     const newRounds = [...gameState.rounds];
     newRounds[gameState.currentRoundIndex].selectedOptionIndex = index;
 
@@ -133,8 +125,7 @@ const App: React.FC = () => {
       }));
     } else {
       setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
-      setLoadingMsg(`Секунду, проявляем фото (${nextIdx + 1}/10)...`);
-      
+      setLoadingMsg(`Проявляем фото ${nextIdx + 1}/10...`);
       try {
         const img = await fetchWithRetry(gameState.rounds[nextIdx].location);
         setGameState(prev => {
@@ -149,8 +140,7 @@ const App: React.FC = () => {
           };
         });
       } catch {
-        // Если совсем не получается, пробуем еще раз
-        setTimeout(nextRound, 2000);
+        setTimeout(nextRound, 1000);
       }
     }
   };
@@ -189,7 +179,7 @@ const App: React.FC = () => {
               <span className="text-6xl font-black text-white">?</span>
             </div>
             <h1 className="text-7xl font-black text-white tracking-tighter">Geo<span className="text-indigo-500">Quiz</span></h1>
-            <p className="text-slate-400 text-xl max-w-md">Где было сделано это фото? Выбери один из четырех вариантов. Время ограничено!</p>
+            <p className="text-slate-400 text-xl max-w-md">Угадай место по фото. Быстрые раунды, мгновенная проверка!</p>
             <button onClick={startGame} className="bg-indigo-600 hover:bg-indigo-500 text-white px-12 py-5 rounded-2xl text-2xl font-black transition-all shadow-xl hover:scale-105 active:scale-95">
               Начать игру
             </button>
@@ -198,19 +188,19 @@ const App: React.FC = () => {
 
         {gameState.phase === GamePhase.LOADING_ROUND && (
           <div className="flex flex-col items-center justify-center h-full gap-6">
-            <div className="w-20 h-20 border-4 border-slate-800 border-t-indigo-500 rounded-full animate-spin"></div>
-            <p className="text-2xl font-bold text-slate-300 animate-pulse text-center px-4">{loadingMsg}</p>
+            <div className="w-16 h-16 border-4 border-slate-800 border-t-indigo-500 rounded-full animate-spin"></div>
+            <p className="text-xl font-bold text-slate-400 animate-pulse text-center px-4">{loadingMsg}</p>
           </div>
         )}
 
         {(gameState.phase === GamePhase.QUIZ || gameState.phase === GamePhase.RESULT) && (
-          <div className="flex flex-col h-full gap-6 animate-in fade-in duration-500">
+          <div className="flex flex-col h-full gap-6 animate-in fade-in duration-300">
             <div className="relative flex-1 rounded-3xl overflow-hidden border-4 border-slate-800 shadow-2xl bg-slate-900 min-h-[300px]">
               {currentRound?.imageUrl ? (
                 <img 
                   src={currentRound.imageUrl} 
-                  className="w-full h-full object-cover transition-opacity duration-700" 
-                  alt="Geography Quiz"
+                  className="w-full h-full object-cover" 
+                  alt="Geo Quiz"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-slate-900">
@@ -220,7 +210,7 @@ const App: React.FC = () => {
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
               
               {gameState.phase === GamePhase.RESULT && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in zoom-in-95 duration-300">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in zoom-in-95 duration-200">
                   <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-3xl text-center max-w-sm w-full mx-4">
                      <p className="text-slate-500 uppercase text-xs font-bold tracking-widest mb-1">Правильный ответ:</p>
                      <h2 className="text-3xl font-black text-white mb-1">{currentRound.location.options[currentRound.location.correctOptionIndex]}</h2>
@@ -230,10 +220,9 @@ const App: React.FC = () => {
                        href={`https://www.google.com/maps/search/?api=1&query=${currentRound.location.lat},${currentRound.location.lng}`} 
                        target="_blank" 
                        rel="noopener noreferrer"
-                       className="inline-flex items-center gap-2 text-indigo-300 hover:text-indigo-100 text-sm font-semibold mb-6 underline decoration-indigo-500/50 underline-offset-4 transition-colors"
+                       className="inline-flex items-center gap-2 text-indigo-300 hover:text-indigo-100 text-sm font-semibold mb-6 transition-colors"
                      >
-                       <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                       Посмотреть на карте
+                       📍 Посмотреть на карте
                      </a>
 
                      <button 
@@ -250,18 +239,12 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-auto">
               {currentRound?.location.options.map((option, idx) => {
                 let btnClass = "bg-slate-900 hover:bg-slate-800 text-white border-slate-700";
-                
                 if (gameState.phase === GamePhase.RESULT) {
                   const isCorrect = idx === currentRound.location.correctOptionIndex;
                   const isSelected = idx === currentRound.selectedOptionIndex;
-                  
-                  if (isCorrect) {
-                    btnClass = "bg-emerald-600 border-emerald-400 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)]";
-                  } else if (isSelected && !isCorrect) {
-                    btnClass = "bg-rose-600 border-rose-400 text-white";
-                  } else {
-                    btnClass = "bg-slate-900 text-slate-500 border-slate-800 opacity-50";
-                  }
+                  if (isCorrect) btnClass = "bg-emerald-600 border-emerald-400 text-white shadow-lg";
+                  else if (isSelected) btnClass = "bg-rose-600 border-rose-400 text-white";
+                  else btnClass = "bg-slate-900 text-slate-500 border-slate-800 opacity-50";
                 }
 
                 return (
@@ -269,9 +252,9 @@ const App: React.FC = () => {
                     key={idx}
                     disabled={gameState.phase === GamePhase.RESULT}
                     onClick={() => handleOptionSelect(idx)}
-                    className={`flex items-center p-6 rounded-2xl border-2 text-xl font-bold transition-all text-left group ${btnClass} ${gameState.phase === GamePhase.QUIZ ? 'hover:scale-[1.01] active:scale-95' : ''}`}
+                    className={`flex items-center p-5 rounded-2xl border-2 text-lg font-bold transition-all text-left group ${btnClass} ${gameState.phase === GamePhase.QUIZ ? 'hover:scale-[1.01] active:scale-95' : ''}`}
                   >
-                    <span className={`w-10 h-10 rounded-lg flex items-center justify-center mr-4 text-sm font-black transition-colors ${gameState.phase === GamePhase.QUIZ ? 'bg-slate-800 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white' : 'bg-black/20'}`}>
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center mr-4 text-xs font-black transition-colors ${gameState.phase === GamePhase.QUIZ ? 'bg-slate-800 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white' : 'bg-black/20'}`}>
                       {String.fromCharCode(65 + idx)}
                     </span>
                     {option}
@@ -283,24 +266,16 @@ const App: React.FC = () => {
         )}
 
         {gameState.phase === GamePhase.SUMMARY && (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-10 py-10 animate-in slide-in-from-bottom-10 duration-700">
+          <div className="flex flex-col items-center justify-center h-full text-center gap-10 py-10 animate-in slide-in-from-bottom-10 duration-500">
             <div>
-              <h1 className="text-6xl font-black text-white mb-4 tracking-tight">Игра окончена!</h1>
-              <p className="text-2xl text-slate-400">Твой итоговый результат:</p>
+              <h1 className="text-6xl font-black text-white mb-4 tracking-tight">Финиш!</h1>
               <div className="mt-6 flex items-baseline justify-center gap-2">
                 <span className="text-9xl font-black text-indigo-500 tracking-tighter">{gameState.score}</span>
                 <span className="text-4xl font-bold text-slate-700">/ 10</span>
               </div>
-              <p className="mt-4 text-xl font-medium text-slate-300">
-                {gameState.score >= 8 ? '🌎 Ты настоящий эксперт!' : gameState.score >= 5 ? '🗺️ Неплохо, но есть куда расти.' : '🧭 Пора открывать атлас!'}
-              </p>
             </div>
-            
-            <button 
-              onClick={() => window.location.reload()} 
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-16 py-6 rounded-3xl text-3xl font-black shadow-2xl hover:scale-105 transition-transform active:scale-95"
-            >
-              Сыграть ещё раз
+            <button onClick={() => window.location.reload()} className="bg-indigo-600 hover:bg-indigo-500 text-white px-16 py-6 rounded-3xl text-3xl font-black shadow-2xl hover:scale-105 transition-transform active:scale-95">
+              Ещё раз
             </button>
           </div>
         )}
