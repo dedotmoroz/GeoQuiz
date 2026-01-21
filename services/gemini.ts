@@ -2,11 +2,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Location } from "../types";
 
-export const generateLocations = async (): Promise<Location[]> => {
+export const generateLocations = async (count: number = 10, excludeNames: string[] = []): Promise<Location[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const excludePart = excludeNames.length > 0 ? ` Do not include these locations: ${excludeNames.join(', ')}.` : '';
+  
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Generate 10 diverse geographic locations worldwide for a quiz. 
+    contents: `Generate ${count} diverse geographic locations worldwide for a geography quiz.${excludePart}
     For each: 
     - Provide 4 plausible options (countries/cities).
     - Identify correct index (0-3).
@@ -41,7 +43,8 @@ export const generateLocations = async (): Promise<Location[]> => {
 
 export const generateStreetViewImage = async (location: Location): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const prompt = `A realistic photographic view of a street or landscape in ${location.name}. ${location.description}. Cinematic, 8k. NO TEXT, NO SIGNS, NO UI. Focus on architecture and nature.`;
+  // Упрощенный промпт без тяжелых дескрипторов вроде 8k для потенциального ускорения и лучшей стабильности
+  const prompt = `Highly realistic photographic shot of ${location.name}. ${location.description}. Cinematic lighting, professional travel photography. NO TEXT, NO SIGNS, NO UI elements. Realistic colors.`;
   
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
