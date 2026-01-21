@@ -16,7 +16,6 @@ const App: React.FC = () => {
 
   const [loadingMsg, setLoadingMsg] = useState("");
   const prefetchActive = useRef(false);
-  const locationsLoading = useRef(false);
 
   useEffect(() => {
     let timer: any;
@@ -41,22 +40,14 @@ const App: React.FC = () => {
     }
   };
 
-  const prefetchImages = async (rounds: Round[], startIndex: number = 1) => {
+  const prefetchImages = async (rounds: Round[]) => {
     if (prefetchActive.current) return;
     prefetchActive.current = true;
 
-    for (let i = startIndex; i < rounds.length; i++) {
-      // Проверяем актуальный стейт через ref или просто берем из замыкания (но стейт может обновиться)
-      // Здесь лучше использовать функциональный апдейт чтобы проверить наличие картинки
-      let shouldFetch = false;
-      setGameState(s => {
-        if (s.rounds[i] && !s.rounds[i].imageUrl) shouldFetch = true;
-        return s;
-      });
-
-      if (shouldFetch) {
+    for (let i = 1; i < rounds.length; i++) {
+      if (!rounds[i].imageUrl) {
         try {
-          await sleep(2500); 
+          await sleep(2500); // Снизили задержку между предзагрузками
           const img = await fetchWithRetry(rounds[i].location);
           
           setGameState(prev => {
@@ -73,77 +64,39 @@ const App: React.FC = () => {
     prefetchActive.current = false;
   };
 
-  const fetchRemainingLocations = async (firstLocName: string) => {
-    if (locationsLoading.current) return;
-    locationsLoading.current = true;
-    
+  const startGame = async () => {
+    setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
+    setLoadingMsg("Ищем локации...");
     try {
-      const moreLocs = await generateLocations(9, [firstLocName]);
-      const moreRounds: Round[] = moreLocs.map(l => ({
+      // Модель Flash сгенерирует это очень быстро
+      const locs = await generateLocations();
+      setLoadingMsg(`Загружаем первый вид...`);
+      
+      const initialRounds: Round[] = locs.map((l) => ({
         location: l,
         selectedOptionIndex: null,
         imageUrl: ''
       }));
 
-      setGameState(prev => ({
-        ...prev,
-        rounds: [...prev.rounds, ...moreRounds]
-      }));
+      const firstImg = await fetchWithRetry(locs[0]);
+      initialRounds[0].imageUrl = firstImg;
 
-      // Сразу запускаем предзагрузку картинок для новых локаций
-      // Начинаем с индекса 1, так как 0 уже обрабатывается
-      prefetchImages([...gameState.rounds, ...moreRounds], 1);
-    } catch (e) {
-      console.error("Failed to fetch more locations", e);
-    } finally {
-      locationsLoading.current = false;
-    }
-  };
-
-  const startGame = async () => {
-    setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND, rounds: [] }));
-    setLoadingMsg("Ищем первую локацию...");
-    
-    try {
-      // 1. Запрашиваем ОДНУ локацию - это максимально быстро
-      const [firstLoc] = await generateLocations(1);
-      
-      const firstRound: Round = {
-        location: firstLoc,
-        selectedOptionIndex: null,
-        imageUrl: ''
-      };
-
-      // 2. Сразу переходим в режим игры, даже если картинка еще не готова
-      // (App покажет спиннер вместо картинки)
       setGameState({
         currentRoundIndex: 0,
-        rounds: [firstRound],
+        rounds: initialRounds,
         phase: GamePhase.QUIZ,
         score: 0,
         timeLeft: 30
       });
 
-      // 3. Параллельно запускаем загрузку первой картинки и остальных 9 локаций
-      fetchWithRetry(firstLoc).then(img => {
-        setGameState(prev => {
-          const newRounds = [...prev.rounds];
-          if (newRounds[0]) newRounds[0].imageUrl = img;
-          return { ...prev, rounds: newRounds };
-        });
-      });
-
-      fetchRemainingLocations(firstLoc.name);
-
+      prefetchImages(initialRounds);
     } catch (e) {
-      setLoadingMsg("Ошибка при старте. Попробуйте еще раз.");
+      setLoadingMsg("Ошибка. Попробуйте снова через минуту.");
     }
   };
 
   const handleOptionSelect = (index: number) => {
     const currentRound = gameState.rounds[gameState.currentRoundIndex];
-    if (!currentRound) return;
-
     const isCorrect = index === currentRound.location.correctOptionIndex;
     const newRounds = [...gameState.rounds];
     newRounds[gameState.currentRoundIndex].selectedOptionIndex = index;
@@ -158,22 +111,7 @@ const App: React.FC = () => {
 
   const nextRound = async () => {
     const nextIdx = gameState.currentRoundIndex + 1;
-    
-    // Если мы дошли до конца текущего (возможно неполного) списка
     if (nextIdx >= gameState.rounds.length) {
-      // Если локации еще грузятся, подождем
-      if (locationsLoading.current) {
-        setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
-        setLoadingMsg("Подгружаем следующие уровни...");
-        while (locationsLoading.current) {
-          await sleep(500);
-        }
-        // После загрузки рекурсивно пробуем перейти к следующему раунду
-        nextRound();
-        return;
-      }
-      
-      // Если все загружено и мы в конце - финиш
       setGameState(s => ({ ...s, phase: GamePhase.SUMMARY }));
       return;
     }
@@ -187,7 +125,7 @@ const App: React.FC = () => {
       }));
     } else {
       setGameState(s => ({ ...s, phase: GamePhase.LOADING_ROUND }));
-      setLoadingMsg(`Готовим раунд ${nextIdx + 1}/10...`);
+      setLoadingMsg(`Проявляем фото ${nextIdx + 1}/10...`);
       try {
         const img = await fetchWithRetry(gameState.rounds[nextIdx].location);
         setGameState(prev => {
@@ -241,7 +179,7 @@ const App: React.FC = () => {
               <span className="text-6xl font-black text-white">?</span>
             </div>
             <h1 className="text-7xl font-black text-white tracking-tighter">Geo<span className="text-indigo-500">Quiz</span></h1>
-            <p className="text-slate-400 text-xl max-w-md">Угадай место по фото. Мгновенный старт, 10 раундов!</p>
+            <p className="text-slate-400 text-xl max-w-md">Угадай место по фото. Быстрые раунды, мгновенная проверка!</p>
             <button onClick={startGame} className="bg-indigo-600 hover:bg-indigo-500 text-white px-12 py-5 rounded-2xl text-2xl font-black transition-all shadow-xl hover:scale-105 active:scale-95">
               Начать игру
             </button>
@@ -261,18 +199,17 @@ const App: React.FC = () => {
               {currentRound?.imageUrl ? (
                 <img 
                   src={currentRound.imageUrl} 
-                  className="w-full h-full object-cover animate-in fade-in duration-700" 
+                  className="w-full h-full object-cover" 
                   alt="Geo Quiz"
                 />
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-4">
+                <div className="w-full h-full flex items-center justify-center bg-slate-900">
                   <div className="w-12 h-12 border-4 border-slate-700 border-t-indigo-500 rounded-full animate-spin"></div>
-                  <p className="text-slate-500 text-sm font-medium">Проявляем снимок...</p>
                 </div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
               
-              {gameState.phase === GamePhase.RESULT && currentRound && (
+              {gameState.phase === GamePhase.RESULT && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in zoom-in-95 duration-200">
                   <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-3xl text-center max-w-sm w-full mx-4">
                      <p className="text-slate-500 uppercase text-xs font-bold tracking-widest mb-1">Правильный ответ:</p>
