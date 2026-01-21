@@ -1,5 +1,5 @@
 {
-  "name": "Copy of GeoQuest",
+  "name": "GeoQuiz",
   "description": "Угадывайте места по всему миру по изображениям, сгенерированным ИИ.",
   "requestFramePermissions": [
     "geolocation"
